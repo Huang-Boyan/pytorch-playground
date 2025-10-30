@@ -1,0 +1,152 @@
+#一、检查数据库
+import random
+import numpy as np
+import torch
+import os
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)  # 调用函数
+
+data_path = "../data/Market-1501-v15.09.15"
+required_dirs = ['bounding_box_train', 'bounding_box_test', 'query']
+
+for dir_name in required_dirs:
+    dir_path = os.path.join(data_path, dir_name)
+    if os.path.exists(dir_path):
+        num_images = len([f for f in os.listdir(dir_path) if f.endswith('.jpg')])
+        print(f"✓ {dir_name}: {num_images} 张图像")
+    else:
+        print(f"✗ {dir_name}: 不存在")
+
+
+# src/dataloader.py
+import os
+from PIL import Image
+import torch
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as T
+
+
+class Market1501(Dataset):
+    def __init__(self, root, split='train', transform=None):
+        self.root = root
+        self.split = split
+        self.transform = transform
+
+        if split == 'train':
+            self.data_dir = os.path.join(root, 'bounding_box_train')
+        elif split == 'test':
+            self.data_dir = os.path.join(root, 'bounding_box_test')
+        elif split == 'query':
+            self.data_dir = os.path.join(root, 'query')
+
+        self.samples = self._load_data()
+
+    def _load_data(self):
+        samples = []
+        for fname in os.listdir(self.data_dir):
+            if fname.endswith('.jpg'):
+                pid = int(fname.split('_')[0])
+                camid = int(fname.split('_')[1][1])
+                img_path = os.path.join(self.data_dir, fname)
+                samples.append((img_path, pid, camid))
+        return samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, pid, camid = self.samples[idx]
+        img = Image.open(img_path).convert('RGB')
+        if self.transform:
+            img = self.transform(img)
+        return img, pid, camid
+
+
+def get_transforms(height=256, width=128, is_train=True):
+    normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    if is_train:
+        return T.Compose([
+            T.Resize((height, width)),
+            T.RandomHorizontalFlip(p=0.5),
+            T.ToTensor(),
+            normalize,
+        ])
+    else:
+        return T.Compose([
+            T.Resize((height, width)),
+            T.ToTensor(),
+            normalize,
+        ])
+
+#二、加载数据
+import sys
+sys.path.append('src')
+from dataset import Market1501, get_transforms
+
+# 测试数据加载
+data_path = "../data/Market-1501-v15.09.15"
+transform = get_transforms(is_train=True)
+dataset = Market1501(data_path, split='train', transform=transform)
+
+print(f"数据集大小: {len(dataset)}")
+img, pid, camid = dataset[0]
+print(f"图像形状: {img.shape}")
+print(f"行人ID: {pid}, 摄像头ID: {camid}")
+
+#三、导入模型
+import torch
+import torch.nn as nn
+import torchvision.models as models
+
+class ReIDModel(nn.Module):
+    def __init__(self, num_classes=751, embedding_dim=512):
+        super(ReIDModel, self).__init__()
+        # 使用预训练ResNet50
+        self.backbone = models.resnet50(pretrained=True)
+        self.backbone.fc = nn.Identity()
+
+        # 分类头
+        self.classifier = nn.Linear(2048, num_classes)
+        # 特征头
+        self.embedding = nn.Linear(2048, embedding_dim)
+
+    def forward(self, x):
+        features = self.backbone(x)
+        cls_output = self.classifier(features)
+        emb_output = self.embedding(features)
+        return cls_output, emb_output
+
+# 四、训练模型并写入tensorboard日志
+import torch
+import torch.nn as nn
+import torchvision.models as models
+
+
+class ReIDModel(nn.Module):
+    def __init__(self, num_classes=751, embedding_dim=512):
+        super(ReIDModel, self).__init__()
+        # 使用预训练ResNet50
+        self.backbone = models.resnet50(pretrained=True)
+        self.backbone.fc = nn.Identity()
+
+        # 分类头
+        self.classifier = nn.Linear(2048, num_classes)
+        # 特征头
+        self.embedding = nn.Linear(2048, embedding_dim)
+
+    def forward(self, x):
+        features = self.backbone(x)
+        cls_output = self.classifier(features)
+        emb_output = self.embedding(features)
+        return cls_output, emb_output
